@@ -1,0 +1,274 @@
+Skip to content
+You said:
+Design and implement a fully automated CI/CD pipeline for a React application using Git/GitHub, Jenkins and Docker. Deploy the containerized application on kubernetes
+ChatGPT said:
+
+Nice, this is a classic end-to-end DevOps setup. I’ll give you both the architecture design and a working implementation you can actually run or adapt.
+
+I’ll assume:
+
+    React app built with npm
+
+    GitHub as source control
+
+    Jenkins running in a container or VM
+
+    Kubernetes cluster (minikube, kind, EKS, etc.)
+
+    Docker image pushed to Docker Hub (can swap for ECR/GCR)
+
+1. High-Level CI/CD Architecture
+
+Developer
+   |
+   |  git push
+   v
+GitHub Repo
+   |
+   |  Webhook
+   v
+Jenkins
+   |
+   |-- Checkout code
+   |-- Install dependencies
+   |-- Run tests
+   |-- Build React app
+   |-- Build Docker image
+   |-- Push image to registry
+   |
+   v
+Kubernetes Cluster
+   |
+   |-- Deployment updated
+   |-- Rolling update
+   v
+React App exposed via Service / Ingress
+
+2. Repository Structure
+
+react-app/
+│
+├── public/
+├── src/
+├── package.json
+├── package-lock.json
+│
+├── Dockerfile
+├── Jenkinsfile
+│
+└── k8s/
+    ├── deployment.yaml
+    └── service.yaml
+
+3. Dockerfile (Multi-Stage Build – Best Practice)
+
+# Build stage
+FROM node:18-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+# Production stage
+FROM nginx:alpine
+COPY --from=build /app/build /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+
+✔️ Small image
+✔️ No node_modules in prod
+✔️ Fast startup
+4. Jenkins Setup (One-Time)
+Install plugins
+
+    Git
+
+    Pipeline
+
+    Docker Pipeline
+
+    Kubernetes CLI (optional)
+
+Credentials
+
+Add in Jenkins → Manage Credentials
+
+    dockerhub-creds → Docker Hub username/password
+
+    kubeconfig → kubeconfig file (or service account if Jenkins runs in cluster)
+
+5. Jenkinsfile (Declarative Pipeline)
+
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_IMAGE = "yourdockerhubusername/react-app"
+        DOCKER_TAG   = "${BUILD_NUMBER}"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/your-org/react-app.git'
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh 'npm install'
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                sh 'npm test -- --watch=false'
+            }
+        }
+
+        stage('Build React App') {
+            steps {
+                sh 'npm run build'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                docker build -t $DOCKER_IMAGE:$DOCKER_TAG .
+                docker tag $DOCKER_IMAGE:$DOCKER_TAG $DOCKER_IMAGE:latest
+                """
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh """
+                    echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                    docker push $DOCKER_IMAGE:$DOCKER_TAG
+                    docker push $DOCKER_IMAGE:latest
+                    """
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                withCredentials([file(
+                    credentialsId: 'kubeconfig',
+                    variable: 'KUBECONFIG'
+                )]) {
+                    sh """
+                    kubectl set image deployment/react-app \
+                    react-app=$DOCKER_IMAGE:$DOCKER_TAG
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Deployment successful 🚀'
+        }
+        failure {
+            echo 'Pipeline failed ❌'
+        }
+    }
+}
+
+✔️ Fully automated
+✔️ Rolling updates
+✔️ Versioned images
+6. Kubernetes Deployment
+k8s/deployment.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: react-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: react-app
+  template:
+    metadata:
+      labels:
+        app: react-app
+    spec:
+      containers:
+        - name: react-app
+          image: yourdockerhubusername/react-app:latest
+          ports:
+            - containerPort: 80
+
+k8s/service.yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: react-app-service
+spec:
+  type: NodePort
+  selector:
+    app: react-app
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30007
+
+Apply once:
+
+kubectl apply -f k8s/
+
+7. GitHub Webhook
+
+In GitHub repo:
+
+    Settings → Webhooks
+
+    Payload URL: http://<jenkins-url>/github-webhook/
+
+    Content type: application/json
+
+    Trigger: Push events
+
+Now every git push → pipeline runs automatically.
+8. CI/CD Flow Summary
+
+    Developer pushes code to GitHub
+
+    GitHub webhook triggers Jenkins
+
+    Jenkins:
+
+        Tests React app
+
+        Builds Docker image
+
+        Pushes image to registry
+
+        Updates Kubernetes deployment
+
+    Kubernetes performs rolling update
+
+    New version live with zero downtime
+
+9. Enhancements (Production-Ready)
+
+If you want to level this up:
+
+    🔐 Use Secrets for env vars
+
+    🌐 Add Ingress + TLS
+
+ 
