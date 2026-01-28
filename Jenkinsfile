@@ -11,7 +11,7 @@ pipeline {
         stage('Link Git Repository') {
             steps {
                 git branch: 'main',
-                    url: 'https://github.com/1ms24mc102/repo.git'
+                    url: 'https://github.com/1ms24mc102/react-app.git'
             }
         }
 
